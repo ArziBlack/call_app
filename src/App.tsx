@@ -1,9 +1,10 @@
-// App.tsx
 import { useState, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
 import JoinForm from './components/joinform';
-import VoiceRoom from './components/voiceroom';
+// import VideoRoom from './components/VideoRoom';
+import { io, Socket } from 'socket.io-client';
+import AudioRoom from './components/audioroom';
 
+// Types for our application
 export interface User {
   id: string;
   name: string;
@@ -38,7 +39,7 @@ function App() {
     if (!socket) return;
 
     try {
-      // Get local audio stream only (no video)
+      // Get local media stream
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: false, 
         audio: true 
@@ -51,12 +52,11 @@ function App() {
       socket.emit('join', { name });
       setJoined(true);
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Could not access microphone. Please check permissions.');
+      console.error('Error accessing media devices:', error);
+      alert('Could not access camera or microphone. Please check permissions.');
     }
   };
 
-  // Handle leaving the call
   const handleLeave = () => {
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
@@ -79,18 +79,14 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-700 py-10 px-4">
+    <div className="min-h-screen w-screen bg-gradient-to-b from-blue-500 to-stone-900 py-10 px-4 relative">
       <div className="max-w-7xl mx-auto">
-        {!joined && (
-          <h1 className="text-4xl md:text-5xl font-bold text-center text-white mb-12 drop-shadow-lg">
-            Voice Call App
-          </h1>
-        )}
+        <h1 className="text-3xl md:text-4xl font-bold text-center text-white mb-8">Video Call App</h1>
         
         {!joined ? (
           <JoinForm onJoin={handleJoin} />
         ) : (
-          <VoiceRoom
+          <AudioRoom
             socket={socket}
             username={username}
             users={users}
