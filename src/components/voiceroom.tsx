@@ -1,5 +1,5 @@
 // components/VoiceRoom.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Socket } from 'socket.io-client';
 import { Mic, MicOff, PhoneOff } from 'lucide-react';
 import type { User, RTCPeerData } from '../App';
@@ -27,6 +27,12 @@ const VoiceRoom = ({
   onLeave,
 }: VoiceRoomProps) => {
   const [isMuted, setIsMuted] = useState(false);
+  // const [speakingUsers, setSpeakingUsers] = useState<Set<string>>(new Set());
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const speechStartTimeRef = useRef<number | null>(null);
   const allUsers = [{ id: 'local', name: username }, ...users];
 
   // Handle socket events
@@ -132,6 +138,94 @@ const VoiceRoom = ({
     };
   }, [socket, localStream, peers, setUsers, setPeers]);
 
+  // Setup speech detection
+  useEffect(() => {
+    if (!localStream) return;
+
+    const setupAudioAnalysis = async () => {
+      try {
+        // Create audio context
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioContextRef.current = audioContext;
+
+        // Create analyser node
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
+        analyserRef.current = analyser;
+
+        // Connect audio stream to analyser
+        const source = audioContext.createMediaStreamSource(localStream);
+        source.connect(analyser);
+
+        // Start monitoring audio levels
+        monitorAudioLevel();
+      } catch (error) {
+        console.error('Error setting up audio analysis:', error);
+      }
+    };
+
+    setupAudioAnalysis();
+
+    // Cleanup function
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
+    };
+  }, [localStream]);
+
+  // Monitor audio level for speech detection
+  const monitorAudioLevel = () => {
+    if (!analyserRef.current) return;
+
+    const analyser = analyserRef.current;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const checkAudioLevel = () => {
+      analyser.getByteFrequencyData(dataArray);
+
+      // Calculate average volume
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i];
+      }
+      const average = sum / bufferLength;
+
+      // Speech detection threshold (adjust as needed)
+      const speechThreshold = 20;
+      const currentTime = Date.now();
+
+      if (average > speechThreshold && !isMuted) {
+        if (!isSpeaking) {
+          // Speech started
+          setIsSpeaking(true);
+          speechStartTimeRef.current = currentTime;
+          console.log(`🎤 [${new Date().toLocaleTimeString()}] ${username} started speaking (volume: ${average.toFixed(1)})`);
+        }
+      } else {
+        if (isSpeaking) {
+          // Speech ended
+          setIsSpeaking(false);
+          const speechDuration = speechStartTimeRef.current 
+            ? ((currentTime - speechStartTimeRef.current) / 1000).toFixed(1)
+            : '0.0';
+          console.log(`🔇 [${new Date().toLocaleTimeString()}] ${username} stopped speaking (duration: ${speechDuration}s)`);
+          speechStartTimeRef.current = null;
+        }
+      }
+
+      // Continue monitoring
+      animationFrameRef.current = requestAnimationFrame(checkAudioLevel);
+    };
+
+    checkAudioLevel();
+  };
+
   // Create a new WebRTC peer connection
   const createPeerConnection = async (userId: string) => {
     if (!socket || !localStream) return;
@@ -229,7 +323,9 @@ const VoiceRoom = ({
         {/* Center Area - Audio Visualization */}
         <div className="flex-1 p-4 sm:p-8 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-50">
           <div className="mb-6 sm:mb-8 relative">
-            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-3xl sm:text-4xl font-bold shadow-2xl">
+            <div className={`w-24 h-24 sm:w-32 sm:h-32 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-3xl sm:text-4xl font-bold shadow-2xl transition-all duration-200 ${
+              isSpeaking ? 'ring-4 ring-green-400 ring-opacity-75 scale-105' : ''
+            }`}>
               {username.charAt(0).toUpperCase()}
             </div>
             <div className="absolute -bottom-1 -right-1 sm:-bottom-2 sm:-right-2 bg-green-500 border-2 sm:border-4 border-white rounded-full p-1.5 sm:p-2">
@@ -239,11 +335,19 @@ const VoiceRoom = ({
                 <Mic className="w-4 h-4 sm:w-6 sm:h-6 text-white" />
               )}
             </div>
+            {isSpeaking && !isMuted && (
+              <div className="absolute -inset-2 rounded-full border-2 border-green-400 animate-ping"></div>
+            )}
           </div>
 
           <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-1 sm:mb-2">{username}</h2>
           <p className="text-sm sm:text-base text-gray-600 mb-6 sm:mb-8">
-            {isMuted ? 'Microphone is muted' : 'Microphone is active'}
+            {isMuted 
+              ? 'Microphone is muted' 
+              : isSpeaking 
+                ? '🎤 Speaking...' 
+                : 'Microphone is active'
+            }
           </p>
 
           {/* Audio Controls */}
@@ -281,7 +385,7 @@ const VoiceRoom = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 sm:p-4">
-            <ParticipantsList users={allUsers} currentUserId="local" />
+            <ParticipantsList users={allUsers} currentUserId="local"  />
           </div>
         </div>
       </div>

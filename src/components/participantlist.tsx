@@ -50,6 +50,7 @@ const ParticipantCard = ({ user, isCurrentUser, isSpeaking }: ParticipantCardPro
 };
 
 const ParticipantsList = ({ users, currentUserId }: ParticipantsListProps) => {
+  console.log(users)
   return (
     <div className="space-y-2 sm:space-y-3">
       {users.length === 0 ? (
